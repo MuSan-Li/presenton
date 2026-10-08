@@ -1002,9 +1002,9 @@ function PreviewPanel({
   const selectedUrl = previewUrls[selectedIndex] ?? previewUrls[0];
 
   return (
-    <main className="mx-auto mt-7 w-full max-w-[1112px] px-4 pb-24 font-syne">
-      <div className="relative overflow-hidden rounded-[10px] border border-[#EDEEEF] bg-[#F9F8F8] shadow-[0_0_14px_rgba(0,0,0,0.14)]">
-        {selectedUrl ? <img src={resolveBackendAssetUrl(selectedUrl)} alt={`Slide ${selectedIndex + 1}`} className="block h-auto max-h-[min(504px,calc(100svh-490px))] min-h-[160px] w-full object-contain" draggable={false} /> : <div className="flex aspect-video items-center justify-center text-sm text-[#777985]">Preview unavailable</div>}
+    <main className="mx-auto mt-7 w-full max-w-[1312px] px-4 pb-24 font-syne">
+      <div className="relative aspect-video w-full overflow-hidden rounded-[10px] border border-[#EDEEEF] bg-[#F9F8F8] shadow-[0_0_14px_rgba(0,0,0,0.14)]">
+        {selectedUrl ? <img src={resolveBackendAssetUrl(selectedUrl)} alt={`Slide ${selectedIndex + 1}`} className="absolute inset-0 block h-full w-full object-contain" draggable={false} /> : <div className="flex h-full items-center justify-center text-sm text-[#777985]">Preview unavailable</div>}
       </div>
       <ThumbnailStrip urls={previewUrls} selectedIndex={selectedIndex} onSelect={onSelect} inline />
     </main>
