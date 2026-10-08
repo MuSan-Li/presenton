@@ -9,12 +9,19 @@ import { getHeader } from "./header";
 
 const TEMPLATE_THEME_CACHE_TTL_MS = 5 * 60 * 1000;
 
+export interface TemplateImportSettings {
+    allow_text_growth: boolean;
+    replace_visuals: boolean;
+    flexible_grouping: boolean;
+}
+
 export interface CreateTemplatePayload {
     pptx_url: string;
     slide_image_urls: string[];
     fonts: Record<string, unknown>;
     name: string;
     description?: string | null;
+    import_settings?: TemplateImportSettings;
 }
 
 export interface TemplateListResponse {

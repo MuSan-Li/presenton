@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from templates.v2.import_settings import TemplateImportSettings, template_import_settings
 
 from templates.v2 import certified_generation as generation
 from templates.v2.generation import generate_slide_layout
@@ -515,6 +516,47 @@ def test_generate_slide_layout_runs_focused_passes(monkeypatch):
     ]
     assert [max_tokens for _, max_tokens in calls] == [12000] * 4
     assert layout.components[1].elements[0].type == "grid"
+
+
+@pytest.mark.parametrize("disabled", ["allow_text_growth", "replace_visuals", "flexible_grouping"])
+def test_import_settings_skip_only_the_requested_pass(monkeypatch, disabled):
+    calls = []
+    responses = {
+        generation.VisualDataReplacementPlan: {"replacements": []},
+        generation.SemanticSlideManifest: _manifest().model_dump(mode="json"),
+        generation.FlexibleSlidePlan: _flexible_plan().model_dump(mode="json"),
+        generation.TextCapacityPlan: {"adjustments": []},
+    }
+
+    def fake_generate(*, output_model, **kwargs):
+        calls.append(output_model)
+        return responses[output_model]
+
+    monkeypatch.setattr(generation, "_generate_structured_with_provider_fallback", fake_generate)
+    with template_import_settings(TemplateImportSettings(**{disabled: False})):
+        layout = generate_slide_layout(_raw_layout(), 0, "https://example.com/slide.png")
+
+    skipped = {
+        "allow_text_growth": generation.TextCapacityPlan,
+        "replace_visuals": generation.VisualDataReplacementPlan,
+        "flexible_grouping": generation.FlexibleSlidePlan,
+    }[disabled]
+    assert calls == [model for model in responses if model is not skipped]
+    assert bool(layout.components)
+    assert (layout.components[1].elements[0].type == "grid") is (disabled != "flexible_grouping")
+
+
+def test_disabled_visual_replacement_keeps_nested_original_image():
+    image = generation.SlideImageElement.model_validate({
+        "type": "image", "position": {"x": 0, "y": 0},
+        "size": {"width": 100, "height": 100},
+        "data": "/app_data/original.png", "decorative": False,
+        "name": "photo", "is_icon": False,
+    })
+    with template_import_settings(TemplateImportSettings(replace_visuals=False)):
+        generation._replace_content_image_url_in_element(image)
+    assert image.data == "/app_data/original.png"
+    assert image.decorative is True
 
 
 def test_text_capacity_failure_preserves_flexible_layout(monkeypatch):

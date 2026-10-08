@@ -23,6 +23,7 @@ from llmai.shared import (
 )
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from templates.v2.import_settings import get_template_import_settings
 from templates.v2.models.layouts import (
     Component,
     FlexibleFlowItemPlan,
@@ -3655,11 +3656,12 @@ def generate_slide_layout(
     if not source_layout.elements:
         raise ValueError("source slide must contain at least one element")
 
+    settings = get_template_import_settings()
     image_part = _openai_image_part(slide_image_url)
     visual_payload, visual_candidate_paths = _visual_data_generation_payload(
         source_layout
     )
-    if visual_candidate_paths:
+    if settings.replace_visuals and visual_candidate_paths:
         try:
             visual_response = _generate_structured_with_provider_fallback(
                 messages=[
@@ -3734,81 +3736,83 @@ def generate_slide_layout(
         return _replace_content_image_urls(_fallback_slide_layout(source_layout))
 
     flexible_plan = FlexibleSlidePlan(regions=[])
-    try:
-        flexible_response = _generate_structured_with_provider_fallback(
-            messages=[
-                SystemMessage(content=GENERATE_FLEXIBLE_REGIONS_SYSTEM_PROMPT),
-                UserMessage(
-                    content=[
-                        image_part,
-                        TextContentPart(
-                            text=json.dumps(
-                                _flexible_generation_payload(source_layout, manifest),
-                                indent=2,
-                            )
-                        ),
-                    ],
+    if settings.flexible_grouping:
+        try:
+            flexible_response = _generate_structured_with_provider_fallback(
+                messages=[
+                    SystemMessage(content=GENERATE_FLEXIBLE_REGIONS_SYSTEM_PROMPT),
+                    UserMessage(
+                        content=[
+                            image_part,
+                            TextContentPart(
+                                text=json.dumps(
+                                    _flexible_generation_payload(source_layout, manifest),
+                                    indent=2,
+                                )
+                            ),
+                        ],
+                    ),
+                ],
+                label=f"slide {slide_index + 1} flexible regions",
+                output_model=FlexibleSlidePlan,
+                response_name="FlexibleSlidePlanResponse",
+                validation_retries=DEFAULT_VALIDATION_RETRIES,
+                extra_validator=lambda plan: _validate_flexible_plan(
+                    plan,
+                    manifest=manifest,
+                    source_elements=source_data["elements"],
                 ),
-            ],
-            label=f"slide {slide_index + 1} flexible regions",
-            output_model=FlexibleSlidePlan,
-            response_name="FlexibleSlidePlanResponse",
-            validation_retries=DEFAULT_VALIDATION_RETRIES,
-            extra_validator=lambda plan: _validate_flexible_plan(
-                plan,
-                manifest=manifest,
-                source_elements=source_data["elements"],
-            ),
-            max_tokens=max_tokens,
-        )
-        flexible_plan = FlexibleSlidePlan.model_validate(flexible_response)
-    except Exception:
-        LOGGER.exception(
-            "[templates.v2.generate] flexible-region pass failed; preserving "
-            "the semantic layout slide=%d",
-            slide_index + 1,
-        )
+                max_tokens=max_tokens,
+            )
+            flexible_plan = FlexibleSlidePlan.model_validate(flexible_response)
+        except Exception:
+            LOGGER.exception(
+                "[templates.v2.generate] flexible-region pass failed; preserving "
+                "the semantic layout slide=%d",
+                slide_index + 1,
+            )
 
     text_capacity_plan = TextCapacityPlan(adjustments=[])
-    try:
-        text_capacity_response = _generate_structured_with_provider_fallback(
-            messages=[
-                SystemMessage(content=GENERATE_TEXT_CAPACITY_SYSTEM_PROMPT),
-                UserMessage(
-                    content=[
-                        image_part,
-                        TextContentPart(
-                            text=json.dumps(
-                                _text_capacity_generation_payload(
-                                    source_layout,
-                                    manifest,
-                                    flexible_plan,
-                                ),
-                                indent=2,
-                            )
-                        ),
-                    ],
+    if settings.allow_text_growth:
+        try:
+            text_capacity_response = _generate_structured_with_provider_fallback(
+                messages=[
+                    SystemMessage(content=GENERATE_TEXT_CAPACITY_SYSTEM_PROMPT),
+                    UserMessage(
+                        content=[
+                            image_part,
+                            TextContentPart(
+                                text=json.dumps(
+                                    _text_capacity_generation_payload(
+                                        source_layout,
+                                        manifest,
+                                        flexible_plan,
+                                    ),
+                                    indent=2,
+                                )
+                            ),
+                        ],
+                    ),
+                ],
+                label=f"slide {slide_index + 1} text capacity",
+                output_model=TextCapacityPlan,
+                response_name="TextCapacityPlanResponse",
+                validation_retries=DEFAULT_VALIDATION_RETRIES,
+                extra_validator=lambda plan: _validate_text_capacity_plan(
+                    plan,
+                    manifest=manifest,
+                    flexible_plan=flexible_plan,
+                    source_elements=source_data["elements"],
                 ),
-            ],
-            label=f"slide {slide_index + 1} text capacity",
-            output_model=TextCapacityPlan,
-            response_name="TextCapacityPlanResponse",
-            validation_retries=DEFAULT_VALIDATION_RETRIES,
-            extra_validator=lambda plan: _validate_text_capacity_plan(
-                plan,
-                manifest=manifest,
-                flexible_plan=flexible_plan,
-                source_elements=source_data["elements"],
-            ),
-            max_tokens=max_tokens,
-        )
-        text_capacity_plan = TextCapacityPlan.model_validate(text_capacity_response)
-    except Exception:
-        LOGGER.exception(
-            "[templates.v2.generate] text-capacity pass failed; preserving "
-            "validated semantic and flexible decisions slide=%d",
-            slide_index + 1,
-        )
+                max_tokens=max_tokens,
+            )
+            text_capacity_plan = TextCapacityPlan.model_validate(text_capacity_response)
+        except Exception:
+            LOGGER.exception(
+                "[templates.v2.generate] text-capacity pass failed; preserving "
+                "validated semantic and flexible decisions slide=%d",
+                slide_index + 1,
+            )
 
     compile_attempts = [
         (flexible_plan, text_capacity_plan),
@@ -3877,7 +3881,9 @@ def _replace_content_image_urls_in_elements(elements: list[Any]) -> None:
 
 def _replace_content_image_url_in_element(element: Any) -> None:
     if isinstance(element, SlideImageElement) and element.decorative is False:
-        if element.is_icon:
+        if not get_template_import_settings().replace_visuals:
+            element.decorative = True
+        elif element.is_icon:
             element.data = CONTENT_ICON_PLACEHOLDER_URL
         else:
             element.data = CONTENT_IMAGE_PLACEHOLDER_URL

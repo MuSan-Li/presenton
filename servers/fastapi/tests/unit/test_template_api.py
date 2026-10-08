@@ -42,6 +42,7 @@ from models.sql.template_v2 import TemplateV2
 from models.theme_data import PresentationThemeData
 from services.export_task_service import PptxToJsonDocument
 from templates.v2.models.layouts import MergedComponents, RawSlideLayouts, SlideLayouts
+from templates.v2.import_settings import TemplateImportSettings, get_template_import_settings
 
 
 RAW_LAYOUTS = {
@@ -411,6 +412,7 @@ def test_create_template_converts_generates_and_persists(tmp_path, fake_async_se
     assert template.layouts == expected_layouts
     assert template.theme == GENERATED_THEME_DATA
     assert template.assets == {
+        "import_settings": {"allow_text_growth": True, "replace_visuals": True, "flexible_grouping": True},
         "icon_type": "bold",
         "icon_weight": "bold",
         "fonts": {"Inter": "Inter"},
@@ -577,6 +579,7 @@ def test_create_template_async_enqueues_task(fake_async_session):
     assert task.status == "pending"
     assert task.message == "Queued for template creation"
     assert task.payload == {
+        "import_settings": {"allow_text_growth": True, "replace_visuals": True, "flexible_grouping": True},
         "pptx_url": "/app_data/uploads/template.pptx",
         "slide_image_urls": ["/app_data/images/slide-1.png"],
         "fonts": {},
@@ -763,8 +766,9 @@ def test_mcp_template_upload_rejects_combined_binary_size(monkeypatch):
     handler.assert_not_awaited()
 
 
+@pytest.mark.parametrize("custom_options", [None, {"allow_text_growth": False, "replace_visuals": False, "flexible_grouping": False}])
 def test_create_template_async_task_updates_slide_status_before_batch_completes(
-    tmp_path,
+    tmp_path, custom_options,
 ):
     pptx_path = tmp_path / "template.pptx"
     pptx_path.write_bytes(b"pptx")
@@ -789,6 +793,8 @@ def test_create_template_async_task_updates_slide_status_before_batch_completes(
             "attempt": 1,
         },
     )
+    if custom_options is not None:
+        task.payload["import_settings"] = custom_options
     session = _TemplateTaskSession(task)
     generated_layouts = _two_template_layouts()["layouts"]
     generation_max_tokens = []
@@ -796,6 +802,7 @@ def test_create_template_async_task_updates_slide_status_before_batch_completes(
     def fake_generate_slide_layout(
         _raw_layout, index, _slide_image_url, _fonts, *, max_tokens=None
     ):
+        assert get_template_import_settings() == TemplateImportSettings(**(custom_options or {}))
         generation_max_tokens.append(max_tokens)
         return generated_layouts[index]
 
@@ -819,6 +826,7 @@ def test_create_template_async_task_updates_slide_status_before_batch_completes(
         side_effect=[4801, 4802],
     ):
         asyncio.run(_run_create_template_task(task.id))
+    assert get_template_import_settings() == TemplateImportSettings()
 
     in_progress_slide_snapshot = next(
         snapshot

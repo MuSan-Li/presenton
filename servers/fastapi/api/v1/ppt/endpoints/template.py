@@ -66,6 +66,7 @@ from templates.v2.generation import (
     generate_template,
     merge_similar_components,
 )
+from templates.v2.import_settings import TemplateImportSettings, template_import_settings
 from templates.v2.models.elements import Image as SlideImageElement
 from templates.v2.models.layouts import (
     MergedComponents,
@@ -145,7 +146,7 @@ class InitTemplateRequest(BaseModel):
 
 
 class CreateTemplateRequest(InitTemplateRequest):
-    pass
+    import_settings: TemplateImportSettings = Field(default_factory=TemplateImportSettings)
 
 
 class McpEncodedUpload(BaseModel):
@@ -1304,6 +1305,7 @@ def _build_created_template(
             else None
         ),
         assets={
+            "import_settings": request.import_settings.model_dump(mode="json"),
             "icon_type": icon_type,
             "icon_weight": icon_type,
             "fonts": available_fonts,
@@ -1320,11 +1322,12 @@ async def _create_template_sync(
     pptx_path, raw_layouts, raw_layouts_json, available_fonts = (
         await _prepare_template_source(request, operation="create")
     )
-    generated_layouts = await _generate_slide_layouts(
-        raw_layouts,
-        request.slide_image_urls,
-        available_fonts,
-    )
+    with template_import_settings(request.import_settings):
+        generated_layouts = await _generate_slide_layouts(
+            raw_layouts,
+            request.slide_image_urls,
+            available_fonts,
+        )
     generated_layouts = _with_randomized_layout_ids(generated_layouts)
     merged_components, generated_theme = await asyncio.gather(
         _merge_generated_components(generated_layouts),
@@ -1379,15 +1382,16 @@ async def _create_template_with_task_progress(
         thumbnail=thumbnail,
     )
     try:
-        generated_layouts = await _generate_slide_layouts_with_task_progress(
-            raw_layouts,
-            request.slide_image_urls,
-            available_fonts,
-            task,
-            sql_session,
-            name=name,
-            thumbnail=thumbnail,
-        )
+        with template_import_settings(request.import_settings):
+            generated_layouts = await _generate_slide_layouts_with_task_progress(
+                raw_layouts,
+                request.slide_image_urls,
+                available_fonts,
+                task,
+                sql_session,
+                name=name,
+                thumbnail=thumbnail,
+            )
     except (ValidationError, ValueError) as exc:
         LOGGER.exception(
             "[template.create.async] slide layout generation produced "
